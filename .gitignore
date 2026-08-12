@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 模型权重（体积大，不入库）
+models/
+mobileclip-pytorch/
+mobileclip_blt.ts
+*.pt
+*.pth
+*.onnx
+
+# 运行时生成
+test_data/
+runs/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 日志
+*.log
+
+# 本地配置
+.claude/

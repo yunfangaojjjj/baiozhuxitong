@@ -1,0 +1,10 @@
+PyQt6
+PyQt6-Qt6
+PyQt6-sip
+numpy
+opencv-python
+pillow
+torch
+torchvision
+ultralytics
+pyyaml
