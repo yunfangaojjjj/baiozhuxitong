@@ -1,3 +1,5 @@
+[English](README_EN.md) | 中文
+
 # YOLOE + SAM 自动标注系统
 
 基于 [Ultralytics YOLOE](https://docs.ultralytics.com/) 与 [SAM 2](https://docs.ultralytics.com/models/sam-2/) 的桌面图像标注工具（PyQt6）。既可以用 YOLOE 做全自动预测和视觉提示批量标注，也可以用 SAM 做点提示的交互式多边形标注，最终导出 YOLO 检测 / 分割 / 姿态标签。
