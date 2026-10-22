@@ -1,4 +1,4 @@
-# YOLOE自动标注系统 - 样式模块
+# AI 标注系统 - 样式模块
 
 from PyQt6.QtGui import QPalette, QColor, QFont
 
@@ -135,6 +135,23 @@ def setup_styling(window):
 
         QPushButton#convert_btn:pressed {
             background-color: #007acc;
+        }
+
+        /* AI 多边形按钮样式 */
+        QPushButton#ai_polygon_btn {
+            background-color: #7c4dff;
+            border-color: #7c4dff;
+            color: white;
+            font-weight: bold;
+        }
+
+        QPushButton#ai_polygon_btn:hover {
+            background-color: #9575ff;
+            border-color: #9575ff;
+        }
+
+        QPushButton#ai_polygon_btn:pressed {
+            background-color: #651fff;
         }
 
         /* 行编辑器 */

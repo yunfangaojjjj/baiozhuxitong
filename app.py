@@ -23,6 +23,9 @@ from modules.format_converter import FormatConverterDialog
 from modules.ui_builder import UIBuilder
 from modules.class_manager import ClassManager
 from modules.label_engine import LabelEngine, _load_image_annotation
+from modules.sam_loader import SAMLoader
+from modules.ai_polygon_editor import AIPolygonEditor
+from modules.batch_labeler import BatchLabeler
 from config import Config
 
 
@@ -74,6 +77,9 @@ class MainWindow(QMainWindow):
         self.dataset_organizer = DatasetOrganizer(self.image_browser, self.annotation_display)
         self.class_manager = ClassManager(self)
         self.label_engine = LabelEngine(self)
+        self.ai_polygon_loader = SAMLoader()
+        self.ai_polygon_editor = AIPolygonEditor(self)
+        self.batch_labeler = BatchLabeler(self)
 
     # ==================================================================
     # 信号连接
@@ -99,12 +105,21 @@ class MainWindow(QMainWindow):
     # 事件处理
     # ==================================================================
     def _mouse_press(self, event):
+        if self.ai_polygon_editor.active:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.ai_polygon_editor.add_point(event.scenePos(), is_foreground=True)
+            elif event.button() == Qt.MouseButton.RightButton:
+                self.ai_polygon_editor.add_point(event.scenePos(), is_foreground=False)
+            return
         if self.visual_drawing:
             self.drawing_start = event.scenePos()
         else:
             self.manual_editor.handle_mouse_press(event)
 
     def _mouse_move(self, event):
+        if self.ai_polygon_editor.active:
+            self.image_browser.update_crosshair(event.scenePos())
+            return
         if self.visual_drawing:
             self.image_browser.update_crosshair(event.scenePos())
         if self.visual_drawing and self.drawing_start:
@@ -120,6 +135,8 @@ class MainWindow(QMainWindow):
             self.manual_editor.handle_mouse_move(event)
 
     def _mouse_release(self, event):
+        if self.ai_polygon_editor.active:
+            return
         if self.visual_drawing and self.drawing_start:
             pos = event.scenePos()
             x1 = min(self.drawing_start.x(), pos.x())
@@ -148,6 +165,28 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         key = event.key()
+
+        # ---- AI 多边形模式 ----
+        if self.ai_polygon_editor.active:
+            modifiers = event.modifiers()
+            # 放行 Ctrl/Alt 组合键（如 Ctrl+S 保存），其余键由 AI 模式接管
+            if modifiers & (Qt.KeyboardModifier.ControlModifier |
+                            Qt.KeyboardModifier.AltModifier):
+                super().keyPressEvent(event)
+                return
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.ai_polygon_editor.confirm()
+                self.status_bar.showMessage("AI 多边形: 继续点击添加提示点，Enter 确认，Esc 退出")
+            elif key == Qt.Key.Key_Backspace:
+                if not self.ai_polygon_editor.undo_last_point():
+                    self.status_bar.showMessage("没有可撤销的提示点")
+            elif key == Qt.Key.Key_Escape:
+                self.ai_polygon_editor.exit()
+                self._update_ai_polygon_ui()
+                self.status_bar.showMessage("AI 多边形模式已退出")
+            event.accept()
+            return
+
         if key == Qt.Key.Key_A:
             self.previous_image()
         elif key == Qt.Key.Key_D:
@@ -291,6 +330,10 @@ class MainWindow(QMainWindow):
         if not self.image_browser.current_image_path:
             QMessageBox.warning(self, "警告", "请先打开图像！")
             return
+        # 与 AI 多边形模式互斥
+        if self.ai_polygon_editor.active:
+            self.ai_polygon_editor.exit()
+            self._update_ai_polygon_ui()
         self.visual_drawing = True
         self.visual_prompt_label.setText("正在绘制边界框...")
         self.start_drawing_btn.setEnabled(False)
@@ -368,6 +411,29 @@ class MainWindow(QMainWindow):
             self.visual_prompt_label.setText(f"保存VPE缓存失败: {str(e)}")
 
     # ==================================================================
+    # AI 多边形（交互式 SAM 分割）
+    # ==================================================================
+    def toggle_ai_polygon(self):
+        """切换 AI 多边形模式"""
+        editor = self.ai_polygon_editor
+        if editor.active:
+            editor.exit()
+            self.status_bar.showMessage("AI 多边形模式已退出")
+        else:
+            ok, msg = editor.enter()
+            if ok:
+                self.status_bar.showMessage(msg)
+            else:
+                QMessageBox.warning(self, "警告", msg)
+        self._update_ai_polygon_ui()
+
+    def _update_ai_polygon_ui(self):
+        """同步 AI 多边形按钮的文本状态"""
+        btn = getattr(self, 'ai_polygon_btn', None)
+        if btn is not None:
+            btn.setText("退出 AI 多边形" if self.ai_polygon_editor.active else "AI 多边形")
+
+    # ==================================================================
     # 标注操作 (委托给 label_engine)
     # ==================================================================
     def auto_label(self):
@@ -375,9 +441,6 @@ class MainWindow(QMainWindow):
 
     def similar_label_auto_label(self):
         self.label_engine.similar_label_auto_label()
-
-    def batch_label(self):
-        self.label_engine.batch_label()
 
     def save_annotation(self):
         if self.label_exporter.export_single_annotation():
@@ -633,6 +696,92 @@ class MainWindow(QMainWindow):
         dialog = FormatConverterDialog(self)
         dialog.exec()
 
+    # ==================================================================
+    # 批量模型标注
+    # ==================================================================
+    def browse_batch_weights(self):
+        """选择 YOLO 权重文件"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 YOLO 权重文件", ".", "模型文件 (*.pt)")
+        if path:
+            self.batch_weights_edit.setText(path)
+
+    def load_batch_model(self):
+        """加载右侧面板选中的 YOLO 权重（模型缓存，加载一次可反复标注）"""
+        path = self.batch_weights_edit.text().strip()
+        if not path:
+            QMessageBox.warning(self, "警告", "请先选择权重文件！")
+            return
+        ok, msg = self.batch_labeler.load_model(path)
+        self.batch_model_status.setText(msg)
+        if not ok:
+            QMessageBox.warning(self, "警告", msg)
+
+    def batch_label(self):
+        """用已加载的模型对当前文件夹整批推理并覆盖写标签"""
+        if not self.batch_labeler.is_loaded():
+            QMessageBox.warning(self, "警告", "请先加载模型！")
+            return
+
+        image_files = self.image_browser.image_files
+        if not image_files:
+            QMessageBox.warning(self, "警告", "请先打开图像文件夹！")
+            return
+
+        try:
+            conf = float(self.batch_conf_edit.text().strip())
+            iou = float(self.batch_iou_edit.text().strip())
+        except ValueError:
+            QMessageBox.warning(self, "警告", "置信度 / IoU 阈值必须为数字！")
+            return
+
+        # 覆盖确认
+        existing = 0
+        for p in image_files:
+            lp = os.path.splitext(p)[0] + '.txt'
+            if os.path.exists(lp) and os.path.getsize(lp) > 0:
+                existing += 1
+        if existing > 0:
+            reply = QMessageBox.question(
+                self, "确认覆盖",
+                f"检测到 {existing} 张图像已有标签，批量标注将覆盖它们。是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        progress = QProgressDialog("正在批量标注...", "取消", 0, len(image_files), self)
+        progress.setWindowTitle("批量模型标注")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+
+        def update_progress(current, total):
+            progress.setValue(current)
+            return not progress.wasCanceled()
+
+        success, fail = self.batch_labeler.run(
+            image_files, conf=conf, iou=iou, progress_callback=update_progress)
+        progress.close()
+
+        self._save_batch_classes()
+        msg = f"批量标注完成：成功 {success} 个，失败 {fail} 个"
+        self.status_bar.showMessage(msg)
+        QMessageBox.information(self, "完成", msg)
+        self.reload_current_annotations()
+
+    def _save_batch_classes(self):
+        """把模型类别写入当前图像所在文件夹的 classes.txt"""
+        class_names = self.batch_labeler.class_names
+        if not class_names or not self.image_browser.current_image_path:
+            return
+        folder = os.path.dirname(self.image_browser.current_image_path)
+        classes_file = os.path.join(folder, 'classes.txt')
+        try:
+            with open(classes_file, 'w', encoding='utf-8') as f:
+                for name in class_names:
+                    f.write(f"{name}\n")
+        except Exception as e:
+            print(f"保存类别文件失败: {e}")
+
     def show_about(self):
         QMessageBox.information(
             self, "关于 YOLOE 自动标注系统",
@@ -642,6 +791,9 @@ class MainWindow(QMainWindow):
     # ---- 内部辅助 ----
     def _after_image_change(self):
         """打开图像/文件夹后的统一刷新（加载标注 + 刷新界面）"""
+        if self.ai_polygon_editor.active:
+            self.ai_polygon_editor.exit()
+            self._update_ai_polygon_ui()
         _load_image_annotation(self)
         self.class_manager.load_from_file()
         self.update_status_bar()
@@ -650,6 +802,19 @@ class MainWindow(QMainWindow):
 
     def _after_nav(self):
         """翻图后的统一刷新（不重新加载 classes.txt）"""
+        if self.ai_polygon_editor.active:
+            self.ai_polygon_editor.exit()
+            self._update_ai_polygon_ui()
+        self.update_status_bar()
+        self.update_all_panels()
+
+    def reload_current_annotations(self):
+        """批量标注后刷新当前图像的标注与类别（不重建文件夹树）"""
+        if self.ai_polygon_editor.active:
+            self.ai_polygon_editor.exit()
+            self._update_ai_polygon_ui()
+        _load_image_annotation(self)
+        self.class_manager.load_from_file()
         self.update_status_bar()
         self.update_all_panels()
 

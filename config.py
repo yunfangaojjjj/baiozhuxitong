@@ -2,6 +2,7 @@
 
 # 导入torch以检查设备
 import torch
+import os
 
 class Config:
     # 模型配置
@@ -92,4 +93,24 @@ class Config:
         'delete_box': 'Delete',  # 删除边界框
         'add_box': 'A',  # 添加边界框
         'toggle_auto_label': 'L'  # 切换自动标注
+    }
+
+    # AI 多边形配置（交互式 SAM 分割，对标 Labelme 的 AI Polygon）
+    AI_POLYGON_CONFIG = {
+        # 推理设备（默认与模型配置一致）
+        'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+        # 默认 SAM 权重路径（ultralytics 官网 SAM2 Hiera-Tiny，约 74MB，
+        # 官方正/负点提示均有效；备选 sam2.1_t.pt 负点响应弱，
+        # 或 MobileSAM models/mobile_sam.pt 约 40MB CPU 更快但负点响应弱）
+        'default_weights_path': os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'models', 'sam2_t.pt'),
+        'foreground_point_color': (0, 255, 0),   # 前景点颜色（绿色）
+        'background_point_color': (255, 0, 0),   # 背景点颜色（红色）
+        'point_radius': 6,                        # 提示点半径
+        'preview_line_color': (0, 200, 255),      # 预览多边形线颜色
+        'preview_fill_alpha': 80,                 # 预览多边形填充透明度 (0-255)
+        'polygon_epsilon_ratio': 0.002,           # approxPolyDP 简化容差（相对轮廓周长比例）
+        'max_polygon_points': 500,                # 简化后多边形最大点数（超出则均匀抽稀）
+        'min_polygon_area': 50,                   # 最小多边形面积（过滤噪点）
+        'min_preview_area': 20                    # 最小预览面积（过小视为未分割到目标）
     }

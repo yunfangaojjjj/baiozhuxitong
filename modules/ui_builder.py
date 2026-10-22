@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QMenuBar, QMenu, QStatusBar, QToolBar, QSlider,
     QLineEdit, QGroupBox, QComboBox, QListWidget, QTreeWidget,
     QTreeWidgetItem, QHeaderView, QScrollArea, QListWidgetItem,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction
@@ -56,9 +57,9 @@ class UIBuilder:
         splitter1.addWidget(left_panel)
         splitter1.addWidget(mw.graphics_view)
         splitter1.addWidget(right_panel)
-        splitter1.setSizes([320, 800, 320])
+        splitter1.setSizes([340, 760, 300])
         left_panel.setMinimumWidth(300)
-        right_panel.setMinimumWidth(300)
+        right_panel.setMinimumWidth(280)
         main_layout.addWidget(splitter1)
 
         # 菜单栏、工具栏、状态栏
@@ -101,6 +102,19 @@ class UIBuilder:
         mw.similar_label_btn.clicked.connect(mw.similar_label_auto_label)
         left_layout.addWidget(mw.similar_label_btn)
 
+        # ---- 标注列表 ----
+        self._build_annotation_group(left_layout)
+
+        # ---- AI 多边形 ----
+        mw.ai_polygon_btn = QPushButton("AI 多边形")
+        mw.ai_polygon_btn.setObjectName("ai_polygon_btn")
+        mw.ai_polygon_btn.setToolTip(
+            "交互式 AI 多边形标注（SAM）\n"
+            "左键=前景点  右键=背景点\n"
+            "Enter=确认  Backspace=撤销  Esc=退出")
+        mw.ai_polygon_btn.clicked.connect(mw.toggle_ai_polygon)
+        left_layout.addWidget(mw.ai_polygon_btn)
+
         left_layout.addStretch()
         left_scroll.setWidget(left_panel)
         return left_scroll
@@ -115,6 +129,8 @@ class UIBuilder:
         mw.folder_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         mw.folder_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         mw.folder_tree.header().resizeSection(1, 80)
+        # 限制高度，把空间让给标注列表
+        mw.folder_tree.setMaximumHeight(220)
         folder_layout.addWidget(mw.folder_tree)
 
         btn_layout = QHBoxLayout()
@@ -217,8 +233,8 @@ class UIBuilder:
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(5, 5, 5, 5)
 
-        self._build_annotation_group(right_layout)
         self._build_property_group(right_layout)
+        self._build_batch_group(right_layout)
         self._build_dataset_group(right_layout)
 
         right_layout.addStretch()
@@ -231,6 +247,9 @@ class UIBuilder:
         group_layout = QVBoxLayout(group)
 
         mw.annotation_list = QListWidget()
+        # 伸展占据左侧剩余空间
+        mw.annotation_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         group_layout.addWidget(mw.annotation_list)
 
         btn_layout = QHBoxLayout()
@@ -289,6 +308,47 @@ class UIBuilder:
         update_btn = QPushButton("更新属性")
         update_btn.clicked.connect(mw.update_annotation_prop)
         prop_layout.addWidget(update_btn)
+
+        layout.addWidget(group)
+
+    def _build_batch_group(self, layout):
+        mw = self.mw
+        group = QGroupBox("批量模型标注")
+        batch_layout = QVBoxLayout(group)
+
+        # 权重选择
+        w_layout = QHBoxLayout()
+        w_layout.addWidget(QLabel("权重:"))
+        mw.batch_weights_edit = QLineEdit()
+        mw.batch_weights_edit.setPlaceholderText("选择 .pt 权重文件")
+        w_layout.addWidget(mw.batch_weights_edit)
+        browse_w = QPushButton("浏览")
+        browse_w.clicked.connect(mw.browse_batch_weights)
+        w_layout.addWidget(browse_w)
+        batch_layout.addLayout(w_layout)
+
+        load_btn = QPushButton("加载模型")
+        load_btn.clicked.connect(mw.load_batch_model)
+        batch_layout.addWidget(load_btn)
+
+        mw.batch_model_status = QLabel("未加载模型")
+        mw.batch_model_status.setWordWrap(True)
+        batch_layout.addWidget(mw.batch_model_status)
+
+        # 推理参数
+        p_layout = QHBoxLayout()
+        p_layout.addWidget(QLabel("置信度:"))
+        mw.batch_conf_edit = QLineEdit("0.25")
+        p_layout.addWidget(mw.batch_conf_edit)
+        p_layout.addWidget(QLabel("IoU:"))
+        mw.batch_iou_edit = QLineEdit("0.45")
+        p_layout.addWidget(mw.batch_iou_edit)
+        batch_layout.addLayout(p_layout)
+
+        run_btn = QPushButton("批量标注")
+        run_btn.setObjectName("convert_btn")
+        run_btn.clicked.connect(mw.batch_label)
+        batch_layout.addWidget(run_btn)
 
         layout.addWidget(group)
 
@@ -371,9 +431,9 @@ class UIBuilder:
         # ---- 编辑 ----
         edit_menu = menu_bar.addMenu("编辑")
         for name, shortcut, handler in [
+            ("AI 多边形标注", "Ctrl+P", mw.toggle_ai_polygon),
             ("删除标注", "Delete", mw.delete_annotation),
             ("清空标注", None, mw.clear_annotations),
-            ("批量标注", "Ctrl+Shift+L", mw.batch_label),
         ]:
             action = QAction(name, mw)
             if shortcut:
@@ -435,7 +495,7 @@ class UIBuilder:
 
         for name, handler in [
             ("自动标注", mw.auto_label),
-            ("批量标注", mw.batch_label),
+            ("AI 多边形", mw.toggle_ai_polygon),
         ]:
             action = QAction(name, mw)
             action.triggered.connect(handler)
